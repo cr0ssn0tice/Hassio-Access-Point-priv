@@ -1,37 +1,44 @@
 ---
 name: Hass.io Access Point
-version: 0.5.4
+version: 0.5.5
 slug: hassio-access-point
 description: Create a WiFi access point to directly connect devices to Home Assistant
-arch: [armhf, armv7, aarch64, amd64, i386]
-url: https://github.com/ex-ml/hassio-access-point
+arch:
+  - aarch64
+url: https://github.com/cr0ssn0tice/Hassio-Access-Point-priv
 startup: system
 boot: auto
 host_network: true
-apparmor: true
 host_dbus: true
+apparmor: false
 privileged:
   - NET_ADMIN
+  - SYS_ADMIN
+devices:
+  - /dev
 init: false
+
 options:
-  ssid:
-  wpa_passphrase:
+  ssid: Lifely-Setup
+  wpa_passphrase: SuperSecret123
   channel: 6
   address: 192.168.99.1
   netmask: 255.255.255.0
   broadcast: 192.168.99.255
-  interface: wlan0
+  interface: wlan1
   hide_ssid: false
   dhcp: false
   dhcp_start_addr: 192.168.99.10
   dhcp_end_addr: 192.168.99.20
   allow_mac_addresses: []
   deny_mac_addresses: []
-  debug: 0
+  debug: 2
+  ht_capab: "[HT40][SHORT-GI-20][DSSS_CCK-40]"
   hostapd_config_override: []
   client_internet_access: false
   client_dns_override: []
   dnsmasq_config_override: []
+
 schema:
   ssid: match(^.{2,32}$)
   wpa_passphrase: password
@@ -45,9 +52,9 @@ schema:
   dhcp_start_addr: match(^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$)
   dhcp_end_addr: match(^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$)
   allow_mac_addresses:
-    - match(^([0-9a-fA-F]{2}:){4}[0-9a-fA-F]{2})?
+    - match(^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$)?
   deny_mac_addresses:
-    - match(^([0-9a-fA-F]{2}:){4}[0-9a-fA-F]{2})?
+    - match(^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$)?
   debug: int(0,2)
   ht_capab: match(^(\[[A-Z0-9][A-Z0-9_+-]*\])+$)?
   hostapd_config_override:
