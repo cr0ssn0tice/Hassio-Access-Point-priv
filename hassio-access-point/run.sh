@@ -129,6 +129,17 @@ is_forwarding_enabled() {
 
 iptables_setup() {
     if bashio::config.true "client_internet_access"; then
+        if [ -z "${DEFAULT_ROUTE_INTERFACE}" ]; then
+            bashio::exit.nok "client_internet_access is enabled, but no default route interface was found."
+        fi
+
+        if [ "${DEFAULT_ROUTE_INTERFACE}" = "${INTERFACE}" ]; then
+            bashio::exit.nok "AP interface (${INTERFACE}) cannot also be the internet uplink."
+        fi
+
+        logger "Enabling IPv4 forwarding" 1
+        echo 1 > /proc/sys/net/ipv4/ip_forward
+
         if ! is_masquerading_enabled; then
             logger "Adding NAT masquerade on ${DEFAULT_ROUTE_INTERFACE}" 1
             iptables-nft -t nat -A POSTROUTING -o "${DEFAULT_ROUTE_INTERFACE}" -j MASQUERADE \
@@ -143,6 +154,11 @@ iptables_setup() {
                 -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT \
                 -m comment --comment "ap-addon-inet"
         fi
+
+        logger "=== DEBUG: FORWARD rules ===" 1
+        iptables-nft -S FORWARD || true
+        logger "=== DEBUG: NAT rules ===" 1
+        iptables-nft -t nat -S || true
     fi
 }
 
@@ -159,6 +175,8 @@ iptables_cleanup() {
             -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT \
             -m comment --comment "ap-addon-inet" || true
     fi
+
+    echo 0 > /proc/sys/net/ipv4/ip_forward 2>/dev/null || true
 }
 
 trap 'term_handler' SIGTERM SIGINT
@@ -191,9 +209,11 @@ CIDR_ADDRESS="${ADDRESS}/${PREFIX}"
 DEFAULT_ROUTE_INTERFACE="$(ip route show default | awk '/^default/ { print $5; exit }')"
 
 echo "Starting Hass.io Access Point Addon"
-
 echo "=== DEBUG: ip link ==="
 ip link || true
+echo "=== DEBUG: routes ==="
+ip route || true
+echo "=== DEBUG: default uplink === ${DEFAULT_ROUTE_INTERFACE:-<none>}"
 echo "=== DEBUG: /sys/class/net ==="
 ls -la /sys/class/net || true
 
