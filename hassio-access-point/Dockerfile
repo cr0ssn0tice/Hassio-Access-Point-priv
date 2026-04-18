@@ -2,7 +2,7 @@ FROM ghcr.io/home-assistant/base:latest
 
 LABEL \
   io.hass.type="app" \
-  io.hass.name="Hass.io Access Point" \
+  io.hass.name="Lifely Access Point" \
   io.hass.description="Create a WiFi access point to directly connect devices to Home Assistant" \
   io.hass.url="https://github.com/cr0ssn0tice/Hassio-Access-Point-priv"
 
