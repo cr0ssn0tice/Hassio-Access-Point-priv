@@ -24,9 +24,8 @@ term_handler() {
     fi
 
     iptables_cleanup || true
-
-    ip link set "${INTERFACE}" down 2>/dev/null || true
     ip addr flush dev "${INTERFACE}" 2>/dev/null || true
+    ip link set "${INTERFACE}" down 2>/dev/null || true
 
     exit 0
 }
@@ -41,6 +40,37 @@ logger() {
 
 have_command() {
     command -v "$1" >/dev/null 2>&1
+}
+
+netmask_to_prefix() {
+    case "${1}" in
+        255.255.255.255) echo "32" ;;
+        255.255.255.254) echo "31" ;;
+        255.255.255.252) echo "30" ;;
+        255.255.255.248) echo "29" ;;
+        255.255.255.240) echo "28" ;;
+        255.255.255.224) echo "27" ;;
+        255.255.255.192) echo "26" ;;
+        255.255.255.128) echo "25" ;;
+        255.255.255.0)   echo "24" ;;
+        255.255.254.0)   echo "23" ;;
+        255.255.252.0)   echo "22" ;;
+        255.255.248.0)   echo "21" ;;
+        255.255.240.0)   echo "20" ;;
+        255.255.224.0)   echo "19" ;;
+        255.255.192.0)   echo "18" ;;
+        255.255.128.0)   echo "17" ;;
+        255.255.0.0)     echo "16" ;;
+        255.254.0.0)     echo "15" ;;
+        255.252.0.0)     echo "14" ;;
+        255.248.0.0)     echo "13" ;;
+        255.240.0.0)     echo "12" ;;
+        255.224.0.0)     echo "11" ;;
+        255.192.0.0)     echo "10" ;;
+        255.128.0.0)     echo "9" ;;
+        255.0.0.0)       echo "8" ;;
+        *) return 1 ;;
+    esac
 }
 
 get_dns_servers() {
@@ -145,7 +175,7 @@ DHCP_END_ADDR="$(bashio::config 'dhcp_end_addr')"
 ALLOW_MAC_ADDRESSES="$(bashio::config 'allow_mac_addresses')"
 DENY_MAC_ADDRESSES="$(bashio::config 'deny_mac_addresses')"
 DEBUG="$(bashio::config 'debug')"
-HT_CAPAB="$(bashio::config 'ht_capab' '[HT40][SHORT-GI-20][DSSS_CCK-40]')"
+HT_CAPAB="$(bashio::config 'ht_capab' '[HT20][SHORT-GI-20]')"
 HOSTAPD_CONFIG_OVERRIDE="$(bashio::config 'hostapd_config_override')"
 CLIENT_DNS_OVERRIDE="$(bashio::config 'client_dns_override')"
 DNSMASQ_CONFIG_OVERRIDE="$(bashio::config 'dnsmasq_config_override')"
@@ -154,6 +184,9 @@ HIDE_SSID=0
 if bashio::config.true "hide_ssid"; then
     HIDE_SSID=1
 fi
+
+PREFIX="$(netmask_to_prefix "${NETMASK}")" || bashio::exit.nok "Unsupported netmask: ${NETMASK}"
+CIDR_ADDRESS="${ADDRESS}/${PREFIX}"
 
 DEFAULT_ROUTE_INTERFACE="$(ip route show default | awk '/^default/ { print $5; exit }')"
 
@@ -197,21 +230,24 @@ ip link set "${INTERFACE}" down || true
 logger "Run command: ip addr flush dev ${INTERFACE}" 1
 ip addr flush dev "${INTERFACE}" || true
 
-logger "Run command: ip addr add ${ADDRESS} dev ${INTERFACE}" 1
-ip addr add "${ADDRESS}" broadcast "${BROADCAST}" dev "${INTERFACE}" || true
+logger "Run command: ip addr add ${CIDR_ADDRESS} broadcast ${BROADCAST} dev ${INTERFACE}" 1
+ip addr add "${CIDR_ADDRESS}" broadcast "${BROADCAST}" dev "${INTERFACE}"
 
 logger "Run command: ip link set ${INTERFACE} up" 1
 ip link set "${INTERFACE}" up
+
+echo "=== DEBUG: interface address ==="
+ip addr show "${INTERFACE}" || true
 
 logger "# Building hostapd config" 1
 cat > "${HOSTAPD_CONF}" <<EOF
 interface=${INTERFACE}
 driver=nl80211
 ssid=${SSID}
-wpa_passphrase=${WPA_PASSPHRASE}
 channel=${CHANNEL}
 hw_mode=g
 wpa=2
+wpa_passphrase=${WPA_PASSPHRASE}
 wpa_key_mgmt=WPA-PSK
 rsn_pairwise=CCMP
 auth_algs=1
@@ -219,6 +255,8 @@ ignore_broadcast_ssid=${HIDE_SSID}
 ieee80211n=1
 wmm_enabled=1
 ht_capab=${HT_CAPAB}
+ctrl_interface=/var/run/hostapd
+ctrl_interface_group=0
 EOF
 
 if [ -n "${ALLOW_MAC_ADDRESSES}" ]; then
@@ -256,14 +294,20 @@ if bashio::config.true "dhcp"; then
     cat > "${DNSMASQ_CONF}" <<EOF
 interface=${INTERFACE}
 bind-interfaces
+listen-address=${ADDRESS}
 dhcp-range=${DHCP_START_ADDR},${DHCP_END_ADDR},12h
+dhcp-option=3,${ADDRESS}
+dhcp-option=6,${ADDRESS}
 EOF
 
-    if dns_line="$(get_dns_servers)"; then
-        echo "${dns_line}" >> "${DNSMASQ_CONF}"
-        logger "DNS config: ${dns_line}" 0
-    else
-        logger "No DNS servers could be determined automatically. Consider using client_dns_override." 0
+    if bashio::config.true "client_internet_access"; then
+        if dns_line="$(get_dns_servers)"; then
+            sed -i '/^dhcp-option=6,/d' "${DNSMASQ_CONF}"
+            echo "${dns_line}" >> "${DNSMASQ_CONF}"
+            logger "DNS config: ${dns_line}" 0
+        else
+            logger "No upstream DNS servers could be determined automatically. Using AP address as DNS." 0
+        fi
     fi
 
     if [ -n "${DNSMASQ_CONFIG_OVERRIDE}" ]; then
@@ -273,9 +317,15 @@ EOF
             logger "dnsmasq override: ${override}" 0
         done
     fi
+
+    echo "=== DEBUG: dnsmasq.conf ==="
+    cat "${DNSMASQ_CONF}" || true
 else
     logger "# DHCP disabled, skipping dnsmasq" 1
 fi
+
+echo "=== DEBUG: hostapd.conf ==="
+cat "${HOSTAPD_CONF}" || true
 
 if [ -z "${DEFAULT_ROUTE_INTERFACE}" ] && bashio::config.true "client_internet_access"; then
     bashio::exit.nok "No default route interface found, but client_internet_access is enabled."
@@ -285,8 +335,9 @@ iptables_setup
 
 if bashio::config.true "dhcp"; then
     logger "## Starting dnsmasq daemon" 1
-    dnsmasq -C "${DNSMASQ_CONF}" -k &
+    dnsmasq -C "${DNSMASQ_CONF}" -d &
     DNSMASQ_PID=$!
+    sleep 2
 fi
 
 logger "## Starting hostapd daemon" 1
