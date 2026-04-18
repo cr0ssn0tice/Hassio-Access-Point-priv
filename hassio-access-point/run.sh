@@ -73,50 +73,6 @@ netmask_to_prefix() {
     esac
 }
 
-get_dns_servers() {
-    if [ -n "${CLIENT_DNS_OVERRIDE}" ]; then
-        local dns_string="dhcp-option=6"
-        local dns
-        for dns in ${CLIENT_DNS_OVERRIDE}; do
-            dns_string="${dns_string},${dns}"
-        done
-        echo "${dns_string}"
-        return 0
-    fi
-
-    if have_command nmcli; then
-        local dns_string="dhcp-option=6"
-        local found=0
-        while read -r dns; do
-            [ -z "${dns}" ] && continue
-            dns_string="${dns_string},${dns}"
-            found=1
-        done < <(nmcli device show 2>/dev/null | awk '/IP4\.DNS/ {print $2}')
-
-        if [ "${found}" -eq 1 ]; then
-            echo "${dns_string}"
-            return 0
-        fi
-    fi
-
-    if [ -f /etc/resolv.conf ]; then
-        local dns_string="dhcp-option=6"
-        local found=0
-        while read -r dns; do
-            [ -z "${dns}" ] && continue
-            dns_string="${dns_string},${dns}"
-            found=1
-        done < <(awk '/^nameserver/ {print $2}' /etc/resolv.conf)
-
-        if [ "${found}" -eq 1 ]; then
-            echo "${dns_string}"
-            return 0
-        fi
-    fi
-
-    return 1
-}
-
 is_masquerading_enabled() {
     iptables-nft -t nat -C POSTROUTING -o "${DEFAULT_ROUTE_INTERFACE}" -j MASQUERADE \
         -m comment --comment "ap-addon-inet" 2>/dev/null
@@ -327,14 +283,16 @@ dhcp-option=3,${ADDRESS}
 dhcp-option=6,${ADDRESS}
 EOF
 
-    if bashio::config.true "client_internet_access"; then
-        if dns_line="$(get_dns_servers)"; then
-            sed -i '/^dhcp-option=6,/d' "${DNSMASQ_CONF}"
-            echo "${dns_line}" >> "${DNSMASQ_CONF}"
-            logger "DNS config: ${dns_line}" 0
-        else
-            logger "No upstream DNS servers could be determined automatically. Using AP address as DNS." 0
-        fi
+    # Upstream-DNS nur für dnsmasq selbst, nicht direkt für Clients
+    if [ -n "${CLIENT_DNS_OVERRIDE}" ]; then
+        logger "# Using custom upstream DNS servers for dnsmasq" 1
+        for dns in ${CLIENT_DNS_OVERRIDE}; do
+            echo "server=${dns}" >> "${DNSMASQ_CONF}"
+            logger "dnsmasq upstream DNS: ${dns}" 0
+        done
+        echo "no-resolv" >> "${DNSMASQ_CONF}"
+    else
+        logger "# No custom upstream DNS configured; dnsmasq will use Home Assistant default resolvers via /etc/resolv.conf" 1
     fi
 
     if [ -n "${DNSMASQ_CONFIG_OVERRIDE}" ]; then
