@@ -7,20 +7,20 @@ DNSMASQ_CONF="/tmp/dnsmasq.conf"
 HOSTAPD_ALLOW="/tmp/hostapd.allow"
 HOSTAPD_DENY="/tmp/hostapd.deny"
 
-HOSTAPD_PID=""
-DNSMASQ_PID=""
+HOSTAPD_WRAPPER_PID=""
+DNSMASQ_WRAPPER_PID=""
 
 term_handler() {
     logger "Stopping Hass.io Access Point" 0
 
-    if [ -n "${HOSTAPD_PID}" ] && kill -0 "${HOSTAPD_PID}" 2>/dev/null; then
-        kill "${HOSTAPD_PID}" 2>/dev/null || true
-        wait "${HOSTAPD_PID}" 2>/dev/null || true
+    if [ -n "${HOSTAPD_WRAPPER_PID}" ] && kill -0 "${HOSTAPD_WRAPPER_PID}" 2>/dev/null; then
+        kill "${HOSTAPD_WRAPPER_PID}" 2>/dev/null || true
+        wait "${HOSTAPD_WRAPPER_PID}" 2>/dev/null || true
     fi
 
-    if [ -n "${DNSMASQ_PID}" ] && kill -0 "${DNSMASQ_PID}" 2>/dev/null; then
-        kill "${DNSMASQ_PID}" 2>/dev/null || true
-        wait "${DNSMASQ_PID}" 2>/dev/null || true
+    if [ -n "${DNSMASQ_WRAPPER_PID}" ] && kill -0 "${DNSMASQ_WRAPPER_PID}" 2>/dev/null; then
+        kill "${DNSMASQ_WRAPPER_PID}" 2>/dev/null || true
+        wait "${DNSMASQ_WRAPPER_PID}" 2>/dev/null || true
     fi
 
     iptables_cleanup || true
@@ -34,7 +34,7 @@ logger() {
     local msg="${1:-}"
     local level="${2:-0}"
     if [ "${DEBUG}" -ge "${level}" ]; then
-        echo "${msg}"
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ${msg}"
     fi
 }
 
@@ -138,7 +138,12 @@ iptables_setup() {
         fi
 
         logger "Enabling IPv4 forwarding" 1
-        echo 1 > /proc/sys/net/ipv4/ip_forward
+        if [ -w /proc/sys/net/ipv4/ip_forward ]; then
+            echo 1 > /proc/sys/net/ipv4/ip_forward
+            logger "IPv4 forwarding enabled via /proc/sys/net/ipv4/ip_forward" 1
+        else
+            logger "WARNING: Cannot write /proc/sys/net/ipv4/ip_forward (read-only in container). Assuming host forwarding is already enabled." 0
+        fi
 
         if ! is_masquerading_enabled; then
             logger "Adding NAT masquerade on ${DEFAULT_ROUTE_INTERFACE}" 1
@@ -176,7 +181,9 @@ iptables_cleanup() {
             -m comment --comment "ap-addon-inet" || true
     fi
 
-    echo 0 > /proc/sys/net/ipv4/ip_forward 2>/dev/null || true
+    if [ -w /proc/sys/net/ipv4/ip_forward ]; then
+        echo 0 > /proc/sys/net/ipv4/ip_forward 2>/dev/null || true
+    fi
 }
 
 trap 'term_handler' SIGTERM SIGINT
@@ -208,13 +215,13 @@ CIDR_ADDRESS="${ADDRESS}/${PREFIX}"
 
 DEFAULT_ROUTE_INTERFACE="$(ip route show default | awk '/^default/ { print $5; exit }')"
 
-echo "Starting Hass.io Access Point Addon"
-echo "=== DEBUG: ip link ==="
+logger "Starting Hass.io Access Point Addon" 0
+logger "=== DEBUG: ip link ===" 1
 ip link || true
-echo "=== DEBUG: routes ==="
+logger "=== DEBUG: routes ===" 1
 ip route || true
-echo "=== DEBUG: default uplink === ${DEFAULT_ROUTE_INTERFACE:-<none>}"
-echo "=== DEBUG: /sys/class/net ==="
+logger "=== DEBUG: default uplink === ${DEFAULT_ROUTE_INTERFACE:-<none>}" 1
+logger "=== DEBUG: /sys/class/net ===" 1
 ls -la /sys/class/net || true
 
 required_vars=(ssid wpa_passphrase channel address netmask broadcast interface)
@@ -256,7 +263,7 @@ ip addr add "${CIDR_ADDRESS}" broadcast "${BROADCAST}" dev "${INTERFACE}"
 logger "Run command: ip link set ${INTERFACE} up" 1
 ip link set "${INTERFACE}" up
 
-echo "=== DEBUG: interface address ==="
+logger "=== DEBUG: interface address ===" 1
 ip addr show "${INTERFACE}" || true
 
 logger "# Building hostapd config" 1
@@ -338,13 +345,13 @@ EOF
         done
     fi
 
-    echo "=== DEBUG: dnsmasq.conf ==="
+    logger "=== DEBUG: dnsmasq.conf ===" 1
     cat "${DNSMASQ_CONF}" || true
 else
     logger "# DHCP disabled, skipping dnsmasq" 1
 fi
 
-echo "=== DEBUG: hostapd.conf ==="
+logger "=== DEBUG: hostapd.conf ===" 1
 cat "${HOSTAPD_CONF}" || true
 
 if [ -z "${DEFAULT_ROUTE_INTERFACE}" ] && bashio::config.true "client_internet_access"; then
@@ -355,17 +362,29 @@ iptables_setup
 
 if bashio::config.true "dhcp"; then
     logger "## Starting dnsmasq daemon" 1
-    dnsmasq -C "${DNSMASQ_CONF}" -d &
-    DNSMASQ_PID=$!
+    (
+        dnsmasq -C "${DNSMASQ_CONF}" -d 2>&1 | while IFS= read -r line; do
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] [dnsmasq] ${line}"
+        done
+    ) &
+    DNSMASQ_WRAPPER_PID=$!
     sleep 2
 fi
 
 logger "## Starting hostapd daemon" 1
 if [ "${DEBUG}" -gt 1 ]; then
-    hostapd -d "${HOSTAPD_CONF}" &
+    (
+        hostapd -d "${HOSTAPD_CONF}" 2>&1 | while IFS= read -r line; do
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] [hostapd] ${line}"
+        done
+    ) &
 else
-    hostapd "${HOSTAPD_CONF}" &
+    (
+        hostapd "${HOSTAPD_CONF}" 2>&1 | while IFS= read -r line; do
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] [hostapd] ${line}"
+        done
+    ) &
 fi
-HOSTAPD_PID=$!
+HOSTAPD_WRAPPER_PID=$!
 
-wait "${HOSTAPD_PID}"
+wait "${HOSTAPD_WRAPPER_PID}"
