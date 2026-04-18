@@ -1,20 +1,31 @@
-ARG BUILD_FROM
-FROM $BUILD_FROM
+FROM ghcr.io/home-assistant/base:latest
 
-MAINTAINER ex-ml <ex_ml@sent.com>
+LABEL \
+  io.hass.type="app" \
+  io.hass.name="Hass.io Access Point" \
+  io.hass.description="Create a WiFi access point to directly connect devices to Home Assistant" \
+  io.hass.url="https://github.com/ex-ml/hassio-access-point"
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
-ENV LANG C.UTF-8
+ENV LANG=C.UTF-8
 
 RUN apk update && \
-apk add --no-cache bash iw hostapd networkmanager networkmanager-cli net-tools sudo dnsmasq iptables && \
-rm -rf /var/cache/apk/*
+    apk add --no-cache \
+      bash \
+      iw \
+      hostapd \
+      networkmanager \
+      net-tools \
+      sudo \
+      dnsmasq \
+      iptables && \
+    rm -rf /var/cache/apk/*
 
 COPY hostapd.conf /
 COPY dnsmasq.conf /
-
 COPY run.sh /
-RUN chmod a+x /run.sh
 
-CMD [ "/run.sh" ]
+RUN chmod +x /run.sh
+
+CMD ["/run.sh"]
