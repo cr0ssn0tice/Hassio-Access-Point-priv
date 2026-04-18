@@ -159,6 +159,11 @@ DEFAULT_ROUTE_INTERFACE="$(ip route show default | awk '/^default/ { print $5; e
 
 echo "Starting Hass.io Access Point Addon"
 
+echo "=== DEBUG: ip link ==="
+ip link || true
+echo "=== DEBUG: /sys/class/net ==="
+ls -la /sys/class/net || true
+
 required_vars=(ssid wpa_passphrase channel address netmask broadcast interface)
 for required_var in "${required_vars[@]}"; do
     bashio::config.require "${required_var}" "An AP cannot be created without this information"
